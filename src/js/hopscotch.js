@@ -1,10 +1,27 @@
+/**! hopscotch - v0.2.4
+*
+* Copyright 2015 LinkedIn Corp. All rights reserved.
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*     http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
 (function(context, factory) {
   'use strict';
 
-  if (typeof define === 'function' && define.amd) {
-    // AMD. Register as an anonymous module.
-    define([], factory);
-  } else if (typeof exports === 'object') {
+  //if (typeof define === 'function' && define.amd) {
+  //  // AMD. Register as an anonymous module.
+  //  define([], factory);
+  //} else
+  if (typeof exports === 'object') {
     // Node/CommonJS
     module.exports = factory();
   } else {
@@ -207,7 +224,7 @@
      * [["my_fn_1", "arg1", "arg2"], function() { ... }]
      * @private
      */
-    invokeCallbackArray: function(arr) {
+    invokeCallbackArray: function(arr, ctx) {
       var i, len;
 
       if (Array.isArray(arr)) {
@@ -217,7 +234,7 @@
         }
         else { // assume an array
           for (i = 0, len = arr.length; i < len; ++i) {
-            utils.invokeCallback(arr[i]);
+            utils.invokeCallback(arr[i], ctx);
           }
         }
       }
@@ -228,15 +245,16 @@
      * or an array that references a registered helper function.
      * @private
      */
-    invokeCallback: function(cb) {
+    invokeCallback: function(cb, ctx) {
       if (typeof cb === 'function') {
-        return cb();
+        return cb.call(ctx);
       }
       if (typeof cb === 'string' && helpers[cb]) { // name of a helper
-        return helpers[cb]();
+        // Set the context and execute the original callback.
+        return helpers[cb].call(ctx);
       }
       else { // assuming array
-        return utils.invokeCallbackArray(cb);
+        return utils.invokeCallbackArray(cb, ctx);
       }
     },
 
@@ -246,7 +264,7 @@
      *
      * @private
      */
-    invokeEventCallbacks: function(evtType, stepCb) {
+    invokeEventCallbacks: function(evtType, stepCb, ctx) {
       var cbArr = callbacks[evtType],
           callback,
           fn,
@@ -254,11 +272,11 @@
           len;
 
       if (stepCb) {
-        return this.invokeCallback(stepCb);
+        return this.invokeCallback(stepCb, ctx);
       }
 
       for (i=0, len=cbArr.length; i<len; ++i) {
-        this.invokeCallback(cbArr[i].cb);
+        this.invokeCallback(cbArr[i].cb, ctx);
       }
     },
 
@@ -318,7 +336,7 @@
     },
 
     documentIsReady: function() {
-      return document.readyState === 'complete';
+      return document.readyState === 'complete' || document.readyState === 'interactive';
     },
 
     /**
@@ -1193,20 +1211,19 @@
         if (callouts[opt.id]) {
           throw new Error('Callout by that id already exists. Please choose a unique id.');
         }
-        if (!utils.getStepTarget(opt)) {
-          throw new Error('Must specify existing target element via \'target\' option.');
-        }
         opt.showNextButton = opt.showPrevButton = false;
         opt.isTourBubble = false;
         callout = new HopscotchBubble(opt);
         callouts[opt.id] = callout;
         calloutOpts[opt.id] = opt;
-        callout.render(opt, null, function() {
-          callout.show();
-          if (opt.onShow) {
-            utils.invokeCallback(opt.onShow);
-          }
-        });
+        if (opt.target) {
+          callout.render(opt, null, function() {
+            callout.show();
+            if (opt.onShow) {
+              utils.invokeCallback(opt.onShow);
+            }
+          });
+        }
       }
       else {
         throw new Error('Must specify a callout id.');
@@ -1614,7 +1631,8 @@
 
         if (doCallbacks) {
           if (direction > 0) {
-            doShowFollowingStep = utils.invokeEventCallbacks('next', origStep.onNext);
+            //debugger;
+            doShowFollowingStep = utils.invokeEventCallbacks('next', origStep.onNext, origStep);
           }
           else {
             doShowFollowingStep = utils.invokeEventCallbacks('prev', origStep.onPrev);
@@ -1679,8 +1697,11 @@
       var tmpOpt = {},
           prop,
           tourState,
-          tourStateValues;
-
+          tourStateValues,
+          idx;
+      
+      debugger;
+      
       // Set tour-specific configurations
       for (prop in tour) {
         if (tour.hasOwnProperty(prop) &&
@@ -1688,6 +1709,22 @@
             prop !== 'steps') {
           tmpOpt[prop] = tour[prop];
         }
+      }
+      
+      // Associate the steps with the tour, hierachically, so
+      // that we can traverse backwards
+      // from the step back to the tour.
+      for (idx in tour.steps) {
+        tour.steps[idx].tour = tour;
+        // Add a click handler onto the step to make an easy click step on next.
+        tour.steps[idx].click = function () {
+          if (this.target) {
+            var elements = $(this.target);
+            if (elements.length) {
+              elements.trigger('click');
+            }
+          }
+        }.bind(tour.steps[idx]);
       }
 
       //this.resetDefaultOptions(); // reset all options so there are no surprises
@@ -1896,6 +1933,7 @@
       findStartingStep(currStepNum, skippedSteps, function(stepNum) {
         var target = (stepNum !== -1) && utils.getStepTarget(currTour.steps[stepNum]);
 
+        debugger;
         if (!target) {
           // Should we trigger onEnd callback? Let's err on the side of caution
           // and not trigger it. Don't want weird stuff happening on a page that
@@ -1975,6 +2013,7 @@
      * @returns {Object} Hopscotch
      */
     this.nextStep = function(doCallbacks) {
+      //debugger;
       changeStep.call(this, doCallbacks, 1);
       return this;
     };
@@ -2424,8 +2463,92 @@
 // Template includes, placed inside a closure to ensure we don't
 // end up declaring our shim globally.
 (function(){
-// @@include('../../src/tl/_template_headers.js') //
-// @@include('../../tmp/js/hopscotch_templates.js') //
+var _ = {};
+/*
+ * Adapted from the Underscore.js framework. Check it out at
+ * https://github.com/jashkenas/underscore
+ */
+_.escape = function(str){
+  if(customEscape){ return customEscape(str); }
+  
+  if(str == null) return '';
+  return ('' + str).replace(new RegExp('[&<>"\']', 'g'), function(match){
+    if(match == '&'){ return '&amp;' }
+    if(match == '<'){ return '&lt;' }
+    if(match == '>'){ return '&gt;' }
+    if(match == '"'){ return '&quot;' }
+    if(match == "'"){ return '&#x27;' }
+  });
+}
+this["templates"] = this["templates"] || {};
+
+this["templates"]["bubble_default"] = function(obj) {
+obj || (obj = {});
+var __t, __p = '', __e = _.escape, __j = Array.prototype.join;
+function print() { __p += __j.call(arguments, '') }
+with (obj) {
+
+
+  function optEscape(str, unsafe){
+    if(unsafe){
+      return _.escape(str);
+    }
+    return str;
+  }
+;
+__p += '\n<div class="hopscotch-bubble-container" style="width: ' +
+((__t = ( step.width )) == null ? '' : __t) +
+'px; padding: ' +
+((__t = ( step.padding )) == null ? '' : __t) +
+'px;">\n  ';
+ if(tour.isTour){ ;
+__p += '<span class="hopscotch-bubble-number">' +
+((__t = ( i18n.stepNum )) == null ? '' : __t) +
+'</span>';
+ } ;
+__p += '\n  <div class="hopscotch-bubble-content">\n    ';
+ if(step.title !== ''){ ;
+__p += '<h3 class="hopscotch-title">' +
+((__t = ( optEscape(step.title, tour.unsafe) )) == null ? '' : __t) +
+'</h3>';
+ } ;
+__p += '\n    ';
+ if(step.content  !== ''){ ;
+__p += '<div class="hopscotch-content">' +
+((__t = ( optEscape(step.content, tour.unsafe) )) == null ? '' : __t) +
+'</div>';
+ } ;
+__p += '\n  </div>\n  <div class="hopscotch-actions">\n    ';
+ if(buttons.showPrev){ ;
+__p += '<button class="hopscotch-nav-button prev hopscotch-prev">' +
+((__t = ( i18n.prevBtn )) == null ? '' : __t) +
+'</button>';
+ } ;
+__p += '\n    ';
+ if(buttons.showCTA){ ;
+__p += '<button class="hopscotch-nav-button next hopscotch-cta">' +
+((__t = ( buttons.ctaLabel )) == null ? '' : __t) +
+'</button>';
+ } ;
+__p += '\n    ';
+ if(buttons.showNext){ ;
+__p += '<button class="hopscotch-nav-button next hopscotch-next">' +
+((__t = ( i18n.nextBtn )) == null ? '' : __t) +
+'</button>';
+ } ;
+__p += '\n  </div>\n  ';
+ if(buttons.showClose){ ;
+__p += '<a title="' +
+((__t = ( i18n.closeTooltip )) == null ? '' : __t) +
+'" href="#" class="hopscotch-bubble-close hopscotch-close">' +
+((__t = ( i18n.closeTooltip )) == null ? '' : __t) +
+'</a>';
+ } ;
+__p += '\n</div>\n<div class="hopscotch-bubble-arrow-container hopscotch-arrow">\n  <div class="hopscotch-bubble-arrow-border"></div>\n  <div class="hopscotch-bubble-arrow"></div>\n</div>';
+
+}
+return __p
+};
 }.call(winHopscotch));
 
   return winHopscotch;
